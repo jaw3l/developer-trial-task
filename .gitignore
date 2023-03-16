@@ -1,3 +1,4 @@
 .vscode
 source*
 secrets
+*.ipynb

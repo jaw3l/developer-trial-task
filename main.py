@@ -2,14 +2,9 @@ import os
 import re
 from pathlib import Path
 from bs4 import BeautifulSoup
-from googletrans import Translator
-
-
-def exclude_tags(tag):
-    """Exclude tags from the list of tags."""
-    
-    list_of_tags = ["script", "style"]
-    return tag.name not in list_of_tags
+import argostranslate.package
+import argostranslate.translate
+import translatehtml
 
 
 def find_html_files(root_dir: Path) -> list:
@@ -46,47 +41,63 @@ def find_corrupt_pages(file: Path) -> bool:
         
         except Exception as e:
             print(f"Error parsing HTML file {file}: {e}")
-            return True  # Parsing failed, file is corrupt
+            return True
     
+    
+def remove_comment_lines(html_text: str) -> str:
+    """Remove comment lines from HTML text."""
+    
+    pattern = re.compile(r"<!--.*?-->", re.DOTALL)
+    cleaned_html_text = pattern.sub("", html_text)
 
-def find_strings(tag):
-    """Find strings inside suitable HTML tags."""
-    
-    if tag.string is None:
-        return
-    if tag.string.isspace():
-        return
-    
-    # Create regex pattern for "50M", "4,180", "1.5K", "1.5M", "1.5B", "1200+"
-    pattern = re.compile(r"(\d+([,.]\d+)?)([MKBP+])")
-    if pattern.search(tag.string):
-        return
-    
-    return tag.string
+    return cleaned_html_text
 
 
-def translate_strings(string):
-    """Translate strings to Hindi using Google Translate."""
-    
-    translator = Translator()
-    translation = translator.translate(string, src="en", dest="hi")
-    return translation.text
+def translate_html_file(file_path: Path, from_code: str, to_code: str) -> bool:
+    """Translates the contents of an HTML file from one language to another, using Argos Translate."""
+    try:
+        with file_path.open(encoding="utf-8") as f:
+            html = f.read()
 
+        # Download and install the translation package
+        available_packages = argostranslate.package.get_available_packages()
+        available_package = next((p for p in available_packages if p.from_code == from_code and p.to_code == to_code), None)
+        if available_package is None:
+            print(f"[ERROR] Translation package not found for {from_code} -> {to_code}")
+            return False
 
-def replace_string(file: Path, old_string: str, new_string: str):
-    """Replace the old string with the new string in the file."""
-    
-    with file.open("r", encoding="utf-8") as f:
-        content = f.read()
-    
-    content = content.replace(old_string, new_string)
-    
-    with file.open("w", encoding="utf-8") as f:
-        f.write(content)
+        package_path = available_package.download()
+        argostranslate.package.install_from_path(package_path)
+
+        # Perform the translation
+        installed_languages = argostranslate.translate.get_installed_languages()
+        from_lang = next((l for l in installed_languages if l.code == from_code), None)
+        to_lang = next((l for l in installed_languages if l.code == to_code), None)
+        if from_lang is None or to_lang is None:
+            print(f"[ERROR] Source or target language not found: {from_code} -> {to_code}")
+            return False
+
+        translation = from_lang.get_translation(to_lang)
+        translated_soup = translatehtml.translate_html(translation, html)
+        translated_html = translated_soup.prettify()
+
+        # Save the translated HTML to a new file
+        translated_file_path = file_path.parent.joinpath(f"{file_path.stem}_translated{file_path.suffix}")
+        with translated_file_path.open(mode="w", encoding="utf-8") as f:
+            f.write(translated_html)
+
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] Failed to translate {file_path}: {e}")
+        return False
 
 
 def main():
-    root_dir = Path(__file__).parent.joinpath("source/class-central/www.classcentral.com/index.html")
+    root_dir: Path = Path(__file__).parent.joinpath("source/class-central/www.classcentral.com/index.html")
+    new_dir: Path = Path(__file__).parent.mkdir("translated", exist_ok=True)
+    from_code = "en"
+    to_code = "hi"
     
     try:
         for file in find_html_files(root_dir):
@@ -96,17 +107,19 @@ def main():
                 file.unlink()
                 continue
             
-            with file.open("r", encoding="utf-8") as f:
-                html = f.read()
+            with file.open(encoding="utf-8") as html_file:
+                html_text = html_file.read()
+                cleaned_html_text = remove_comment_lines(html_text)
             
-            soup = BeautifulSoup(html, "lxml")
+            if not translate_html_file(file, from_code, to_code):
+                print(f"[ERROR] Failed to translate HTML file: {file}")
+                continue
+                
+            translated_file = file.parent.joinpath(f"{file.stem}_translated{file.suffix}")
+            with translated_file.open(mode="r", encoding="utf-8") as translated_html_file:
+                translated_html_text = translated_html_file.read()
             
-            for tag in soup.find_all(exclude_tags):
-                string = find_strings(tag)
-                if string:
-                    translation = translate_strings(string)
-                    replace_string(file, string, translation)
-                    print(f"[INFO] Translated: {string} -> {translation}")
+            print(f"[INFO] Translated HTML file: {file} -> {translated_file}")
         
         print("[INFO] Translation completed successfully!")
     except Exception as e:
