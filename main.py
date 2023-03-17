@@ -61,6 +61,33 @@ def remove_comment_lines(html_text: str) -> str:
     return cleaned_html_text
 
 
+def post_processing(file: Path):
+    """Check if the file contains the source text and replace it with the target text."""
+    source_text = "एचटीएमएल"
+    target_text = "<!DOCTYPE html>"
+    with file.open(mode="r+", encoding="utf-8") as f:
+        file_content = f.read()
+        if source_text in file_content:
+            file_content = file_content.replace(source_text, target_text)
+            f.seek(0)
+            f.write(file_content)
+            f.truncate()
+            print(f"Doctype declaration is fixed.")
+            
+    # Prettyfying the HTML file using BeautifulSoup
+    with file.open(mode="r+", encoding="utf-8") as f:
+        soup = BeautifulSoup(f, "html.parser")
+        pretty_html = soup.prettify()
+        
+        # Replace the file's content with the prettified version
+        f.seek(0)
+        f.write(pretty_html)
+        f.truncate()
+
+                
+    print(f"Post-processing complete for {file}")
+
+
 def main():
     from_code = "en"
     to_code = "hi"
@@ -107,5 +134,7 @@ def main():
 
         print(f"Translated {html_file} to {to_code} and wrote to {target_file}")
         
+        
 if __name__ == "__main__":
     main()
+    # post_processing(Path(__file__).parent.joinpath("target/about.html"))
