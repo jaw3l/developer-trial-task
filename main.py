@@ -1,12 +1,16 @@
 import os
 import re
 import time
+import langdetect
 import translatehtml
 from pathlib import Path
-from bs4 import BeautifulSoup, PageElement
+import concurrent.futures
 import argostranslate.package
+from rich.progress import track, Progress
 import argostranslate.translate
+from rich.console import Console
 from googletrans import Translator
+from bs4 import BeautifulSoup, PageElement
 
 
 def find_html_files(root_dir: Path) -> list:
@@ -74,27 +78,32 @@ def find_strings(tag: PageElement):
     if tag.name == "input" and tag.get("placeholder") is not None:
         return tag
         
-    if tag.string is None:
+    if not tag.string:
         return
     
-    if tag.string.isspace():
+    if not tag.string.strip():
         return
-
-    # Check if the word is in Hindi language
-    for word in tag.string:
-        if any('\u0900' <= char <= '\u097f' for char in word):
-            return
     
-    return tag
+    # Check if the string is in English language
+    try:
+        lang = langdetect.detect(tag.string)
+        if lang == "en":
+            return tag
+    except:
+        pass
+    
+    return
 
-def translate_strings(text: str, max_retries: int = 3, timeout: int = 2) -> str:
+
+def translate_strings(text: str, max_retries: int = 5, timeout: int = 3) -> str:
     """Translate strings to Hindi using Google Translate."""
-
+    if not text or text.isspace():
+        return ""
     translator = Translator()
     retries = 0
     while retries < max_retries:
         try:
-            translation = translator.translate(text, src="en", dest="hi")
+            translation = translator.translate(text, dest="hi")
             return translation.text
         except Exception as e:
             print(f"Error while translating retrying after {timeout} seconds.")
@@ -129,20 +138,16 @@ def post_processing(file: Path):
                 if tag.name == "input":
                     translated_string = translate_strings(tag.get("placeholder"))
                     print(f"Replacing {tag.get('placeholder')} --> {translated_string}")
-                    tag["placeholder"] = translated_string
-                    continue
-                
-                if tag.name == "img":
+                    tag["placeholder"] = translated_string                
+                elif tag.name == "img":
                     translated_string = translate_strings(tag.get("alt"))
                     print(f"Replacing {tag.get('alt')} --> {translated_string}")
                     tag["alt"] = translated_string
-                    continue
+                elif tag.string:
+                    translated_string = translate_strings(tag.string)
+                    print(f"Replacing {tag.string} --> {translated_string}")
+                    tag.string.replace_with(translated_string)
                 
-                translated_string = translate_strings(tag.string)
-                print(f"Replacing {tag.string} --> {translated_string}")
-                tag.string.replace_with(translated_string)
-                
-        
         # Prettyfying the HTML file using BeautifulSoup
         pretty_html = soup.prettify()
         
@@ -151,15 +156,51 @@ def post_processing(file: Path):
         f.write(pretty_html)
         f.truncate()
         
-
-
     print(f"Post-processing complete for {file}")
+
+
+def process_html_file(html_file: Path, from_lang: str, to_lang: str, target_dir: Path):
+    """Translate and save a single HTML file."""
+    print(f"Processing {html_file.name}...")
+    
+    # Check for corrupt pages
+    if find_corrupt_pages(html_file):
+        print(f"Corrupt page found: {html_file}")
+        return
+
+    # Translate HTML file
+    with html_file.open(encoding="utf-8") as fr:
+        html_text = fr.read()
+        cleaned_html_text = remove_comment_lines(html_text)
+        translated_html_text = translatehtml.translate_html(from_lang.get_translation(to_lang), cleaned_html_text)
+
+    # Write translated HTML to target file
+    
+    target_file = target_dir.joinpath(html_file.relative_to(html_file.parent.parent))
+    print(target_file)
+    exit()
+    if target_file.exists():
+        print(f"Skipping {html_file} as target file {target_file} already exists.")
+        return
+    
+    # Create the target directory if it does not exist
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # target_file = target_dir.joinpath(html_file.name)
+    with target_file.open(mode="w", encoding="utf-8") as fw:
+        fw.write(str(translated_html_text))
+
+    print(f"Translated {html_file}.")
+    
+    # Post-processing
+    post_processing(target_file)
 
 
 def main():
     from_code = "en"
     to_code = "hi"
-    target_dir = Path(__file__).parent.joinpath("target")
+    source_dir = Path(__file__).parent.joinpath("source/class-central/www.classcentral.com/")
+    target_dir = Path(__file__).parent.joinpath("target/class-central/www.classcentral.com/")
 
     # Create target directory if it does not exist
     if not target_dir.exists():
@@ -167,11 +208,7 @@ def main():
 
     # Download and install Argos Translate package
     available_packages = argostranslate.package.get_available_packages()
-    available_package = list(
-        filter(
-            lambda x: x.from_code == from_code and x.to_code == to_code, available_packages
-        )
-    )[0]
+    available_package = list(filter(lambda x: x.from_code == from_code and x.to_code == to_code, available_packages))[0] # prettier-ignore
     download_path = available_package.download()
     argostranslate.package.install_from_path(download_path)
 
@@ -181,31 +218,40 @@ def main():
     to_lang = list(filter(lambda x: x.code == to_code, installed_languages))[0]
 
     # Find all HTML files in the root directory
-    root_dir = Path(__file__).parent.joinpath("source/class-central/www.classcentral.com/")
-    html_files = find_html_files(root_dir)
+    html_files = find_html_files(source_dir)
 
     for html_file in html_files:
+        print(f"Processing {html_file.name}...")
+        
+        relative_path = html_file.relative_to(source_dir)
+        target_file = target_dir.joinpath(relative_path)
+        
+        if target_file.exists():
+            print(f"File already exists: {target_file.name}")
+            continue
+        
         # Check for corrupt pages
         if find_corrupt_pages(html_file):
             print(f"Corrupt page found: {html_file}")
             continue
 
         # Translate HTML file
-        with html_file.open(encoding="utf-8") as f:
-            html_text = f.read()
+        with html_file.open(encoding="utf-8") as fr:
+            html_text = fr.read()
             cleaned_html_text = remove_comment_lines(html_text)
             translated_html_text = translatehtml.translate_html(from_lang.get_translation(to_lang), cleaned_html_text)
 
+        # Create the target directory if it does not exist
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        
         # Write translated HTML to target file
-        target_file = target_dir.joinpath(html_file.name)
-        with target_file.open(mode="w+", encoding="utf-8") as f:
-            f.write(str(translated_html_text))
+        with target_file.open(mode="w", encoding="utf-8") as fw:
+            fw.write(str(translated_html_text))
 
-        print(f"Translated {html_file} to {to_code} and wrote to {target_file}")
+        print(f"Translated {html_file}.")
         
         # Post-processing
         post_processing(target_file)
         
 if __name__ == "__main__":
     main()
-    # post_processing(Path(__file__).parent.joinpath("target/about.html"))
