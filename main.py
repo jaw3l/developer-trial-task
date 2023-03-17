@@ -97,10 +97,12 @@ def find_strings(tag: PageElement):
 
 def translate_strings(text: str, max_retries: int = 5, timeout: int = 3) -> str:
     """Translate strings to Hindi using Google Translate."""
+    
     if not text or text.isspace():
         return ""
-    translator = Translator()
+    
     retries = 0
+    translator = Translator()
     while retries < max_retries:
         try:
             translation = translator.translate(text, dest="hi")
@@ -157,43 +159,6 @@ def post_processing(file: Path):
         f.truncate()
         
     print(f"Post-processing complete for {file}")
-
-
-def process_html_file(html_file: Path, from_lang: str, to_lang: str, target_dir: Path):
-    """Translate and save a single HTML file."""
-    print(f"Processing {html_file.name}...")
-    
-    # Check for corrupt pages
-    if find_corrupt_pages(html_file):
-        print(f"Corrupt page found: {html_file}")
-        return
-
-    # Translate HTML file
-    with html_file.open(encoding="utf-8") as fr:
-        html_text = fr.read()
-        cleaned_html_text = remove_comment_lines(html_text)
-        translated_html_text = translatehtml.translate_html(from_lang.get_translation(to_lang), cleaned_html_text)
-
-    # Write translated HTML to target file
-    
-    target_file = target_dir.joinpath(html_file.relative_to(html_file.parent.parent))
-    print(target_file)
-    exit()
-    if target_file.exists():
-        print(f"Skipping {html_file} as target file {target_file} already exists.")
-        return
-    
-    # Create the target directory if it does not exist
-    target_file.parent.mkdir(parents=True, exist_ok=True)
-    
-    # target_file = target_dir.joinpath(html_file.name)
-    with target_file.open(mode="w", encoding="utf-8") as fw:
-        fw.write(str(translated_html_text))
-
-    print(f"Translated {html_file}.")
-    
-    # Post-processing
-    post_processing(target_file)
 
 
 def main():
