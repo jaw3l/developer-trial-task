@@ -1,10 +1,11 @@
 import os
 import re
+import translatehtml
 from pathlib import Path
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, PageElement
 import argostranslate.package
 import argostranslate.translate
-import translatehtml
+from googletrans import Translator
 
 
 def find_html_files(root_dir: Path) -> list:
@@ -14,6 +15,7 @@ def find_html_files(root_dir: Path) -> list:
         raise ValueError("Root directory is not a directory")
 
     return list(root_dir.glob("**/*.html"))
+
 
 def find_corrupt_pages(file: Path) -> bool:
     """Find corrupt pages."""
@@ -49,6 +51,7 @@ def find_corrupt_pages(file: Path) -> bool:
         print(f"Error parsing HTML file {file}: {e}")
         return True
 
+
 def remove_comment_lines(html_text: str) -> str:
     """Remove comment lines from HTML text."""
     
@@ -61,8 +64,37 @@ def remove_comment_lines(html_text: str) -> str:
     return cleaned_html_text
 
 
+def find_strings(tag: PageElement):
+    """Find strings inside suitable HTML tags."""
+    
+    if tag.name == "input" and tag.get("placeholder") is not None:
+        return tag
+        
+    if tag.string is None:
+        return
+    
+    if tag.string.isspace():
+        return
+
+    # Check if the word is in Hindi language
+    for word in tag.string:
+        if any('\u0900' <= char <= '\u097f' for char in word):
+            return
+    
+    return tag
+
+def translate_strings(text: str) -> str:
+    """Translate strings to Hindi using Google Translate."""
+
+    translator = Translator()
+    translation = translator.translate(text, src="en", dest="hi")
+    return translation.text
+
+
 def post_processing(file: Path):
-    """Check if the file contains the source text and replace it with the target text."""
+    """Post-processing of translated HTML files."""
+    
+    # Fixing the doctype declaration
     source_text = "एचटीएमएल"
     target_text = "<!DOCTYPE html>"
     with file.open(mode="r+", encoding="utf-8") as f:
@@ -74,17 +106,29 @@ def post_processing(file: Path):
             f.truncate()
             print(f"Doctype declaration is fixed.")
             
-    # Prettyfying the HTML file using BeautifulSoup
     with file.open(mode="r+", encoding="utf-8") as f:
         soup = BeautifulSoup(f, "html.parser")
+        
+        tags_to_check = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "a", "li", "td", "th", "title", "input"]
+        
+        for tag in soup.find_all(tags_to_check):
+            filtered_tag = find_strings(tag)
+            if filtered_tag:
+                translated_string = translate_strings(tag.string)
+                print(f"Replacing {tag.string} --> {translated_string}")
+                tag.string.replace_with(translated_string)
+                
+        
+        # Prettyfying the HTML file using BeautifulSoup
         pretty_html = soup.prettify()
         
         # Replace the file's content with the prettified version
         f.seek(0)
         f.write(pretty_html)
         f.truncate()
+        
 
-                
+
     print(f"Post-processing complete for {file}")
 
 
@@ -119,6 +163,7 @@ def main():
     for html_file in html_files:
         # Check for corrupt pages
         if find_corrupt_pages(html_file):
+            print(f"Corrupt page found: {html_file}")
             continue
 
         # Translate HTML file
@@ -134,6 +179,8 @@ def main():
 
         print(f"Translated {html_file} to {to_code} and wrote to {target_file}")
         
+        # Post-processing
+        post_processing(target_file)
         
 if __name__ == "__main__":
     main()
