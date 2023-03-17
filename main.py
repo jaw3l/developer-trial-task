@@ -4,11 +4,8 @@ import time
 import langdetect
 import translatehtml
 from pathlib import Path
-import concurrent.futures
 import argostranslate.package
-from rich.progress import track, Progress
 import argostranslate.translate
-from rich.console import Console
 from googletrans import Translator
 from bs4 import BeautifulSoup, PageElement
 
