@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import translatehtml
 from pathlib import Path
 from bs4 import BeautifulSoup, PageElement
@@ -67,6 +68,9 @@ def remove_comment_lines(html_text: str) -> str:
 def find_strings(tag: PageElement):
     """Find strings inside suitable HTML tags."""
     
+    if tag.name == "img" and tag.get("alt") is not None:
+        return tag
+    
     if tag.name == "input" and tag.get("placeholder") is not None:
         return tag
         
@@ -83,13 +87,21 @@ def find_strings(tag: PageElement):
     
     return tag
 
-def translate_strings(text: str) -> str:
+def translate_strings(text: str, max_retries: int = 3, timeout: int = 2) -> str:
     """Translate strings to Hindi using Google Translate."""
 
     translator = Translator()
-    translation = translator.translate(text, src="en", dest="hi")
-    return translation.text
-
+    retries = 0
+    while retries < max_retries:
+        try:
+            translation = translator.translate(text, src="en", dest="hi")
+            return translation.text
+        except Exception as e:
+            print(f"Error while translating retrying after {timeout} seconds.")
+            time.sleep(timeout)
+            retries += 1
+    print("Maximum number of retries reached.")
+    exit()
 
 def post_processing(file: Path):
     """Post-processing of translated HTML files."""
@@ -109,11 +121,23 @@ def post_processing(file: Path):
     with file.open(mode="r+", encoding="utf-8") as f:
         soup = BeautifulSoup(f, "html.parser")
         
-        tags_to_check = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "a", "li", "td", "th", "title", "input"]
+        tags_to_check = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "a", "li", "td", "th", "title", "input", "img"]
         
         for tag in soup.find_all(tags_to_check):
             filtered_tag = find_strings(tag)
             if filtered_tag:
+                if tag.name == "input":
+                    translated_string = translate_strings(tag.get("placeholder"))
+                    print(f"Replacing {tag.get('placeholder')} --> {translated_string}")
+                    tag["placeholder"] = translated_string
+                    continue
+                
+                if tag.name == "img":
+                    translated_string = translate_strings(tag.get("alt"))
+                    print(f"Replacing {tag.get('alt')} --> {translated_string}")
+                    tag["alt"] = translated_string
+                    continue
+                
                 translated_string = translate_strings(tag.string)
                 print(f"Replacing {tag.string} --> {translated_string}")
                 tag.string.replace_with(translated_string)
