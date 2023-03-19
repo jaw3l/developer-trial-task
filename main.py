@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import shutil
 import langdetect
 import translatehtml
 from pathlib import Path
@@ -81,10 +82,10 @@ def find_strings(tag: PageElement):
     if not tag.string.strip():
         return
     
-    # Check if the string is in English language
+    # Check if the string is in English or Spanish language
     try:
         lang = langdetect.detect(tag.string)
-        if lang == "en":
+        if lang == "en" or lang == "es":
             return tag
     except:
         pass
@@ -110,6 +111,7 @@ def translate_strings(text: str, max_retries: int = 5, timeout: int = 3) -> str:
             retries += 1
     print("Maximum number of retries reached.")
     exit()
+
 
 def post_processing(file: Path):
     """Post-processing of translated HTML files."""
@@ -156,6 +158,33 @@ def post_processing(file: Path):
         f.truncate()
         
     print(f"Post-processing complete for {file}")
+
+
+def replace_images():
+    to_be_replaced = Path(__file__).parent.joinpath("target/class-central/www.classcentral.com/index.html")
+    replace_with = Path(__file__).parent.joinpath("target/class-central/www.classcentral.com/filesingle_index.html")
+    
+    with open(to_be_replaced, mode="r", encoding="utf-8") as fr:
+        soup = BeautifulSoup(fr, "html.parser")
+        
+        for tag in soup.find_all("img"):
+            tag["src"] = replace_with.joinpath(tag["src"]).relative_to(replace_with.parent)
+        
+        with open(to_be_replaced, mode="w", encoding="utf-8") as fw:
+            fw.write(str(soup))
+            print(f"Images replaced in {to_be_replaced}")
+
+
+def copy_other_files():
+    source_path = Path(__file__).parent.joinpath("source/class-central/www.classcentral.com/")
+    target_path = Path(__file__).parent.joinpath("target/class-central/www.classcentral.com/")
+    
+    for src_path in source_path.rglob("*"):
+        if not src_path.suffix == ".html":
+            dest_path = target_path.joinpath(src_path.relative_to(source_path))
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dest_path)
+            print(f"Copying {src_path} --> {dest_path}")
 
 
 def main():
@@ -215,5 +244,6 @@ def main():
         # Post-processing
         post_processing(target_file)
         
+
 if __name__ == "__main__":
     main()
